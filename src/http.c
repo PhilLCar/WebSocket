@@ -1,3 +1,8 @@
+/* Author: Philippe Caron (philippe-caron@hotmail.com)
+ * Date: 28 Feb 2022
+ * Description: Minimal HTTP response implementation (necessary for WebSocket handshake)
+ */
+
 #include <http.h>
 #include <stdio.h>
 #include <stdlib.h>

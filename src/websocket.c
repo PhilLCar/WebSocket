@@ -159,7 +159,24 @@ void *clientoutput(void *vargp) {
         }
         // If size is 0, it's a ping
         if (!size) {
+          ControlFrame  cframe;
+          int  i = 0;
 
+          memset(&cframe.header, 0, sizeof(FrameHeader));
+          cframe.header.end    = 1;
+          cframe.header.mask   = masked;
+          cframe.header.length = size;
+          cframe.header.opcode = FRAME_PING;
+          cframe.header.bytes  = htons(cframe.header.bytes);
+          if (masked) {
+            for (i = 0; i < FRAME_MASK_SIZE; i++) {
+              cframe.spayload[i] = mask[i];
+            }
+          }
+          pthread_mutex_lock(lock);
+          write(fd, &cframe, size + sizeof(FrameHeader) + (masked ? FRAME_MASK_SIZE : 0));
+          pthread_mutex_unlock(lock);
+          connection->ping = clock();
         } 
         // If it fits in a Control Frame
         else if (size <= FRAME_CONTROL_SIZE) {
@@ -400,7 +417,7 @@ void *clientinput(void *vargp) {
         pthread_mutex_unlock(lock);
         break;
       case FRAME_PONG:
-        // TODO
+        connection->ping = (clock() - connection->init) / (CLOCKS_PER_SEC / 1000);
         break;
       default:
         fprintf(stderr, "Unimplemented!\n");
@@ -488,6 +505,27 @@ void *serve(void *vargp) {
     else         fprintf(stderr, "Max connections reached\n");
   }
   return NULL;
+}
+
+int multicast(Interface *dest, const void *src, const size_t size, int type) {
+  for (int i = 0; i < WS_MAX_CONN; i++) {
+    if (dest->connections[i]) webpush(dest->connections[i], src, size, type);
+  }
+}
+
+int webping(Connection *dest, const int timeout) {
+  int ping = -1;
+  dest->ping = 0;
+  webpush(dest, NULL, 0, 0);
+  for (int i = 0; !timeout || i < timeout / (WS_CHECK_PERIOD_US / 1000); i++) {
+    usleep(WS_CHECK_PERIOD_US);
+    if (dest->ping) {
+      ping = dest->ping;
+      dest->ping = 0;
+      break;
+    }
+  }
+  return ping;
 }
 
 void webpush(Connection *dest, const void *src, const size_t size, int type) {

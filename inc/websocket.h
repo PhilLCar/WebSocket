@@ -66,6 +66,7 @@ typedef struct connection {
   struct timeval        timeout;
   pthread_mutex_t       lock;
   int                   stop;
+  clock_t               init;
   long                  ping;
   int                   mask;
 } Connection;
@@ -133,16 +134,17 @@ NOTE:
 This implementation is not optimized for multicast at all. For now, simply send the message to each
 client separetly.
 */
-int  multicast(Interface *dest, const void *src, const size_t size);
+void  multicast(Interface *dest, const void *src, const size_t size, int type);
 
-int  webping(Connection *dest);
+// In milliseconds
+int  webping(Connection *dest, int timeout);
 
 /*
 NOTE:
 Because of the threading, it's necessary to copy the data so that the calling thread can release it
 and the server thread can use it when it pleases.
 */
-void webpush(Connection *dest, const void *src, const size_t size, int binary);
+void webpush(Connection *dest, const void *src, const size_t size, int type);
 int  webpull(void *dest, Connection *src, int *from);
 
 Interface *startservice(const short port, int timeout, int mask);

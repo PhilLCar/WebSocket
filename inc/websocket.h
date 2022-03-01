@@ -20,6 +20,7 @@ This is designed for a Little Endian system (Intel), it hasn't been tested on a 
 #define WS_CHECK_PERIOD_US  15000
 
 #define COM_BUFFERS_SIZE (sizeof(LongFrame) << 2)
+#define COM_TMP_PATH     "."
 
 /*
 NOTE:
@@ -54,6 +55,7 @@ buffers should provide a marginal advantage.
 */
 typedef struct connection {
   struct rolling_buffer {
+    int              fd;
     int              index;
     unsigned char    buffer[COM_BUFFERS_SIZE];
     pthread_mutex_t  lock;
@@ -137,7 +139,7 @@ client separetly.
 void  multicast(Interface *dest, const void *src, const size_t size, int type);
 
 // In milliseconds
-int  webping(Connection *dest, int timeout);
+int  webping(Connection *dest, const int timeout);
 
 /*
 NOTE:
@@ -147,7 +149,7 @@ and the server thread can use it when it pleases.
 void webpush(Connection *dest, const void *src, const size_t size, int type);
 int  webpull(void *dest, Connection *src, int *from);
 
-Interface *startservice(const short port, int timeout, int mask);
+Interface *startservice(const short port, const int timeout, const int mask);
 void       stopservice(Interface *interface);
 
 #endif

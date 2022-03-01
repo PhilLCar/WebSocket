@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -268,7 +269,7 @@ void *clientoutput(void *vargp) {
 
 void *clientinput(void *vargp) {
   Connection     *connection = (Connection*)vargp;
-  int             expect = 0;
+  int             expect     = 0;
   Frame           frame;
   ControlFrame    cframe;
   int             opcode;
@@ -354,7 +355,7 @@ void *clientinput(void *vargp) {
             writel(connection->input.buffer, COM_BUFFERS_SIZE, &connection->input.index, -(long)bigsize);
             writel(connection->input.buffer, COM_BUFFERS_SIZE, &connection->input.index, (long)opcode);
             writel(connection->input.buffer, COM_BUFFERS_SIZE, &connection->input.index, (long)(void*)bigbuffer);
-            connection->update = 1;
+            connection->update += bigsize + 2 * sizeof(long);
             pthread_mutex_unlock(lock_input);
             bigbuffer = NULL;
             bigcap    = FRAME_MAX_SIZE;
@@ -382,8 +383,8 @@ void *clientinput(void *vargp) {
                   index = (index + 1) % COM_BUFFERS_SIZE;
                 }
               }
-              connection->input.index = index;
-              connection->update      = 1;
+              connection->input.index  = index;
+              connection->update      += frame.length + 2 * sizeof(long);
             }
           }
           pthread_mutex_unlock(lock_input);
@@ -487,10 +488,11 @@ void *serve(void *vargp) {
       if (!interface->connections[i]) {
         Connection *connection = malloc(sizeof(Connection));
         memset(connection, 0, sizeof(Connection));
-        connection->fd = client_fd;
+        connection->fd              = client_fd;
         connection->timeout.tv_sec  =  interface->timeout_ms / 1000;
         connection->timeout.tv_usec = (interface->timeout_ms % 1000) * 1000;
-        connection->mask = interface->mask;
+        connection->mask            = interface->mask;
+        connection->input.fd        = open(COM_TMP_PATH, __O_TMPFILE | O_RDWR | O_EXCL);
         pthread_mutex_init(&connection->input.lock, NULL);
         pthread_mutex_init(&connection->input.lock, NULL);
         pthread_mutex_init(&connection->lock, NULL);
@@ -507,7 +509,7 @@ void *serve(void *vargp) {
   return NULL;
 }
 
-int multicast(Interface *dest, const void *src, const size_t size, int type) {
+void multicast(Interface *dest, const void *src, const size_t size, int type) {
   for (int i = 0; i < WS_MAX_CONN; i++) {
     if (dest->connections[i]) webpush(dest->connections[i], src, size, type);
   }
@@ -568,7 +570,13 @@ int webpull(void *dest, Connection *src, int *from) {
   long type = 0;
   if (src->update) {
     pthread_mutex_lock(&src->input.lock);
-    {
+    if (src->update > COM_BUFFERS_SIZE) {
+      // This will create a memory leak if the COM buffer overruns while a pointer is on it
+      // It's the responsability of the program to diligently call webpull()
+      src->update = 0;
+      *from = src->input.index;
+      printf("%s\n", "Warning: Packages were dropped because memory wasn't pulled in time (input buffer)");
+    } else {
       unsigned char *buffer = src->input.buffer;
       long           size   = readl(buffer, COM_BUFFERS_SIZE, from);
 
@@ -594,6 +602,7 @@ int webpull(void *dest, Connection *src, int *from) {
           *from = stop2;
         }
       }
+      src->update -= size + 2 * sizeof(long);
       if (*from == src->input.index) src->update = 0;
     }
     pthread_mutex_unlock(&src->input.lock);
@@ -601,7 +610,7 @@ int webpull(void *dest, Connection *src, int *from) {
   return type;
 }
 
-Interface *startservice(const short port, int timeout, int mask) {
+Interface *startservice(const short port, const int timeout, const int mask) {
   Interface *interface = malloc(sizeof(Interface));
   if (interface) {
     interface->port       = port;

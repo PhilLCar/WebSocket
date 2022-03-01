@@ -9,6 +9,7 @@
 
 #include <pthread.h>
 #include <time.h>
+#include <stdio.h>
 
 /*
 NOTE: 
@@ -17,10 +18,13 @@ This is designed for a Little Endian system (Intel), it hasn't been tested on a 
 
 // The maximum number of client that can connect to the WebSocket server
 #define WS_MAX_CONN            32
-#define WS_CHECK_PERIOD_US  15000
 
-#define COM_BUFFERS_SIZE (sizeof(LongFrame) << 2)
-#define COM_TMP_PATH     "."
+#define READ_FAILURE           0
+#define READ_TEXT              1
+#define READ_BINARY            2
+#define READ_CONNECTION_CLOSED 3
+#define READ_BUFFER_OVERFLOW   4
+#define READ_PING_TIME         5
 
 /*
 NOTE:
@@ -38,11 +42,14 @@ we never receive more than 4 Long Frames within the same cycle.
 #define FRAME_PONG           0xA
 
 typedef struct interface {
-  short           port;
-  int             timeout_ms;
-  int             mask;
-  Connection     *connections[WS_MAX_CONN];
-  pthread_t       serverthread;
+  short               port;
+  int                 timeout_ms;
+  int                 mask;
+  int                 fd;
+  struct sockaddr_in  address;
+  FILE               *stdstream;
+  FILE               *errstream;
+  Connection         *connections[WS_MAX_CONN];
 } Interface;
 
 /*
@@ -54,22 +61,9 @@ sending small frames at a very high frequency in mind, and in this case the roll
 buffers should provide a marginal advantage.
 */
 typedef struct connection {
-  struct rolling_buffer {
-    int              fd;
-    int              index;
-    unsigned char    buffer[COM_BUFFERS_SIZE];
-    pthread_mutex_t  lock;
-    pthread_t        thread;
-  };
-  struct rolling_buffer input;
-  struct rolling_buffer output;
-  int                   update;
   int                   fd;
   struct timeval        timeout;
-  pthread_mutex_t       lock;
-  int                   stop;
-  clock_t               init;
-  long                  ping;
+  clock_t               ping;
   int                   mask;
 } Connection;
 
@@ -131,25 +125,21 @@ typedef struct frame {
   unsigned char payload[FRAME_MAX_SIZE];
 } Frame;
 
+void wssend(Interface *interface, const int descriptor, const unsigned char *buffer, const size_t size, const int type);
+int  wsreceive(Interface *interface, const int descriptor, unsigned char *buffer, const size_t maxbytes, size_t *readbytes);
+
 /*
 NOTE:
 This implementation is not optimized for multicast at all. For now, simply send the message to each
 client separetly.
 */
-void  multicast(Interface *dest, const void *src, const size_t size, int type);
+void wsmulticast(Interface *interface, const void *buffer, const size_t size, const int type);
 
-// In milliseconds
-int  webping(Connection *dest, const int timeout);
+void wsping(Interface *interface, int descriptor);
+int  wsopen(Interface *interface);
+void wsclose(Interface *interface, int descriptor);
 
-/*
-NOTE:
-Because of the threading, it's necessary to copy the data so that the calling thread can release it
-and the server thread can use it when it pleases.
-*/
-void webpush(Connection *dest, const void *src, const size_t size, int type);
-int  webpull(void *dest, Connection *src, int *from);
-
-Interface *startservice(const short port, const int timeout, const int mask);
-void       stopservice(Interface *interface);
+Interface *wsstart(const short port, const int timeout, const int mask, const FILE *stdstream, FILE *errstream);
+void       wsstop(Interface *interface) ;
 
 #endif

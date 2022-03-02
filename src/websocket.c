@@ -1,421 +1,95 @@
 /* Author: Philippe Caron (philippe-caron@hotmail.com)
- * Date: 28 Feb 2022
- * Description: WebSocket server implementation for C.
- * Standard: https://datatracker.ietf.org/doc/html/rfc6455
+ * Date: 01 Mar 2022
+ * Description: WebSocket implementation for C.
  */
 
 #include <websocket.h>
-#include <http.h>
 
-#include <openssl/sha.h>
-#include <openssl/evp.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
 
-const char *SOCKET_MAGIC_STR = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-
-// https://stackoverflow.com/questions/342409/how-do-i-base64-encode-decode-in-c
-unsigned char *encode64(const unsigned char *input, int length) {
-  const int pl = 4 * ((length + 2) / 3);
-  unsigned char *output = malloc((pl + 1) * sizeof(unsigned char));
-  EVP_EncodeBlock(output, input, length);
-  return output;
-}
-// https://stackoverflow.com/questions/342409/how-do-i-base64-encode-decode-in-c
-unsigned char *decode64(const unsigned char *input, int length) {
-  const int pl = 3 * length / 4;
-  unsigned char *output = malloc((pl + 1) * sizeof(unsigned char));
-  EVP_DecodeBlock(output, input, length);
-  return output;
-}
-
-int handshake(Connection *connection) {
-  const int bufsize = 4096;
-  char buffer[bufsize];
-  char key[64];
-  int  version;
-  HttpRequest  request;
-  HttpResponse response;
-  memset(buffer, 0, bufsize * sizeof(char));
-  read(connection->fd, buffer, bufsize);
-  printf("%s\n", buffer);
-  httpreqfromstr(&request, buffer);
-  buffer[0] = 0;
-  getfield(request.header, "Connection", buffer);
-  if (!strstr(buffer, "Upgrade")) {
-    free(request.body);
-    return 1;
-  }
-  buffer[0] = 0;
-  getfield(request.header, "Upgrade", buffer);
-  if (!strstr(buffer, "websocket")) {
-    free(request.body);
-    return 1;
-  }
-  key[0] = 0;
-  getfield(request.header, "Sec-WebSocket-Key", key);
-  getfield(request.header, "Sec-WebSocket-Version", buffer);
-  if (!key[0]) {
-    getfield(request.header, "Sec-Websocket-Key", key);
-    getfield(request.header, "Sec-Websocket-Version", buffer);
-  }
-  version = atoi(buffer);
-  printf("Connecting to socket with key: %s\n", key);
-  printf("WebSocket version:             %d\n", version);
-
-  // Response
-  unsigned char *resp = malloc((strlen(key) + strlen(SOCKET_MAGIC_STR) + 1) * sizeof(char));
-  unsigned char  digest[SHA_DIGEST_LENGTH];
-  unsigned char *ans;
-  int   i;
-
-  for (i = 0; key[i]; i++) resp[i] = key[i];
-  for (int p = 0; SOCKET_MAGIC_STR[p]; i++, p++) resp[i] = SOCKET_MAGIC_STR[p];
-  resp[i] = 0;
-  SHA1(resp, i, digest);
-  ans = encode64(digest, SHA_DIGEST_LENGTH);
-  sprintf(response.version, "%s", request.version);
-  response.status = HTTP_SWITCH;
-  sprintf(response.message, HTTP_SWITCH_M);
-  buildhttpresp(&response, "Upgrade", "websocket");
-  buildhttpresp(&response, "Connection", "Upgrade");
-  buildhttpresp(&response, "Sec-WebSocket-Accept", (char*)ans);
-  response.body = "";
-  httprespstr(&response, buffer);
-  write(connection->fd, buffer, strlen(buffer));
-
-  free(resp);
-  free(ans);
-  free(request.body);
-  return 0;
-}
-
-void wssend(Interface *interface, const int descriptor, const unsigned char *buffer, const size_t size, const int type) {
-  unsigned char mask[FRAME_MASK_SIZE];
-  Connection   *connection = interface->connections[descriptor];
-  int           masked     = connection->mask != 0;
-
-  memset(&mask, 0, FRAME_MASK_SIZE * sizeof(unsigned char));
-  if (masked) {
-    for (int i = 0; i < FRAME_MASK_SIZE; i++) {
-      mask[i] = 0xFF & (connection->mask >> (i << 3));
-    }
-  }
-  // If size is 0, it's a ping
-  if (!size) {
-    ControlFrame  cframe;
-    int  i = 0;
-
-    memset(&cframe.header, 0, sizeof(FrameHeader));
-    cframe.header.end    = 1;
-    cframe.header.mask   = masked;
-    cframe.header.length = size;
-    cframe.header.opcode = FRAME_PING;
-    cframe.header.bytes  = htons(cframe.header.bytes);
-    if (masked) {
-      for (i = 0; i < FRAME_MASK_SIZE; i++) {
-        cframe.spayload[i] = mask[i];
-      }
-    }
-    write(connection->fd, &cframe, size + sizeof(FrameHeader) + (masked ? FRAME_MASK_SIZE : 0));
-    connection->ping = clock();
-  } 
-  // If it fits in a Control Frame
-  else if (size <= FRAME_CONTROL_SIZE) {
-    ControlFrame  cframe;
-
-    memset(&cframe.header, 0, sizeof(FrameHeader));
-    cframe.header.end    = 1;
-    cframe.header.mask   = masked;
-    cframe.header.length = size;
-    cframe.header.opcode = type;
-    cframe.header.bytes  = htons(cframe.header.bytes);
-    if (masked) {
-      for (int i = 0; i < FRAME_MASK_SIZE; i++) {
-        cframe.spayload[i] = mask[i];
-      }
-      for (int i = 0; i < size; i++) {
-        cframe.payload[i] = buffer[i] ^ mask[i % FRAME_MASK_SIZE];
-      }
-    } else {
-      for (int i = 0; i < size; i++) {
-        cframe.spayload[i] = buffer[i] ^ mask[i % FRAME_MASK_SIZE];
-      }
-    }
-    write(connection->fd, &cframe, size + sizeof(FrameHeader) + (masked ? FRAME_MASK_SIZE : 0));
-  }
-  // If it fits in a Long Frame
-  else if (size <= FRAME_MAX_SIZE) {
-    LongFrame lframe;
-    int i = 0;
-
-    memset(&lframe.header, 0, sizeof(FrameHeader));
-    lframe.header.end    = 1;
-    lframe.header.mask   = masked;
-    lframe.header.length = 126;
-    lframe.header.opcode = type;
-    lframe.header.bytes  = htons(lframe.header.bytes);
-    lframe.length        = htons((unsigned short)size);
-    if (masked) {
-      for (int i = 0; i < FRAME_MASK_SIZE; i++) {
-        lframe.spayload[i] = mask[i];
-      }
-      for (int i = 0; i < size; i++) {
-        lframe.payload[i] = buffer[i] ^ mask[i % FRAME_MASK_SIZE];
-      }
-    } else {
-      for (int i = 0; i < size; i++) {
-        lframe.spayload[i] = buffer[i] ^ mask[i % FRAME_MASK_SIZE];
-      }
-    }
-    write(connection->fd, &lframe, size + sizeof(FrameHeader) + sizeof(unsigned short) + (masked ? FRAME_MASK_SIZE : 0));
-  } else {
-    int frames  = size / FRAME_MAX_SIZE;
-    for (int j = 0; j < frames; j++) {
-      LongFrame lframe;
-      int last  = j == (frames - 1);
-      int fsize = last ? size % FRAME_MAX_SIZE : FRAME_MAX_SIZE;
-
-      memset(&lframe.header, 0, sizeof(FrameHeader));
-      lframe.header.end    = last;
-      lframe.header.mask   = masked;
-      lframe.header.length = 126;
-      lframe.header.opcode = type;
-      lframe.header.bytes  = htons(lframe.header.bytes);
-      lframe.length        = htons((unsigned short)size);
-      if (masked && !j) {
-        for (int i = 0; i < FRAME_MASK_SIZE; i++) {
-          lframe.spayload[i] = mask[i];
-        }
-        for (int i = 0; i < FRAME_MAX_SIZE; i++) {
-          lframe.payload[i] = buffer[i] ^ mask[i % FRAME_MASK_SIZE];
-        }
-      } else {
-        int done = j * FRAME_MAX_SIZE;
-        for (int i = 0; i < FRAME_MAX_SIZE && done + i < size; i++) {
-          lframe.spayload[i] = buffer[done + i] ^ mask[(done + i) % FRAME_MASK_SIZE];
-        }
-      }
-      write(connection->fd, &lframe, (last ? fsize : FRAME_MAX_SIZE) + sizeof(FrameHeader) + sizeof(unsigned short) + (masked && !j ? FRAME_MASK_SIZE : 0));
-    }
-  }
+void *wslisten(void *vargp) {
+  size_t        *readbytes;
+  int            readstatus;
+  unsigned char *buffer     = malloc(FRAME_MAX_FRAGMENTS * FRAME_MAX_SIZE * sizeof(unsigned char));
+  WebSocket     *websocket  = (WebSocket*)((void**)vargp)[0];
+  int            client     =             ((long**)vargp)[1];
+  do {
+    readstatus = wsread(websocket->server, client, buffer, FRAME_MAX_SIZE, readbytes);
+    callback(websocket->server, client, buffer, *readbytes, readstatus);
+  } while (readstatus != READ_FAILURE && readstatus != READ_CONNECTION_CLOSED);
+  
+  free(buffer);
   return NULL;
 }
 
-int wsreceive(Interface *interface, const int descriptor, unsigned char *buffer, const size_t maxbytes, size_t *readbytes) {
-  Frame         frame;
-  ControlFrame  cframe;
-  Connection   *connection = interface->connections[descriptor];
-  int           expect     = 0;
-  int           readres    = READ_FAILURE;
 
-  *readbytes = 0;
+void *wsconnect(void *vargp) {
+  pthread_t           client_thread[WS_MAX_CONN];
+  WebSocket          *websocket = (WebSocket*)vargp;
 
+  memset(client_thread, 0, WS_MAX_CONN * sizeof(pthread_t));
   while (1) {
-    fd_set input;
-    FD_ZERO(&input);
-    FD_SET(connection->fd, &input);
-    int n = select(connection->fd + 1, &input, NULL, NULL, &connection->timeout);
-    if (n < 0) { readres = READ_CONNECTION_CLOSED; break; }   // the connection was closed
-    else if (n == 0) continue;                                // select timed out
-
-    // Frame header
-    {
-      short header;
-      read(connection->fd, &header, sizeof(short));
-      frame.header.bytes = ntohs(header);
-    }
-    if (frame.header.length < 126) {
-      frame.length = frame.header.length;
-    } else if (frame.header.length == 126) {
-      short l;
-      read(connection->fd, &l, sizeof(short));
-      frame.length = ntohs(l);
-    } else if (frame.header.length == 127) {
-      // Unsupported: Long Long Frame
-      int l;
-      read(connection->fd, &l, sizeof(int));
-      frame.length = ntohl(l);
-    }
-    if (frame.header.mask) {
-      read(connection->fd, frame.mask, FRAME_MASK_SIZE);
-    } else {
-      memset(frame.mask, 0, FRAME_MASK_SIZE * sizeof(unsigned char));
-    }
-    read(connection->fd, frame.payload, frame.length);
-
-    switch (frame.header.opcode) {
-      case FRAME_CONTINUE:
-      case FRAME_TEXT:
-      case FRAME_BINARY:
-        if (frame.header.opcode == FRAME_CONTINUE && !expect) {
-          fprintf(stderr, "Received a continued frame without previous opcode!\n");
-          // TODO: EMPTY STREAM
-          break;
-        } else if (frame.header.opcode == FRAME_BINARY) {
-          readres = READ_BINARY;
-        } else if (frame.header.opcode == FRAME_TEXT) {
-          readres = READ_BINARY;
-        }
-        expect = !frame.header.end;
-        {
-          int i;
-          for (i = *readbytes; i < frame.length && i < maxbytes; i++) {
-            buffer[i] = frame.payload[i] ^ frame.mask[i % FRAME_MASK_SIZE];
-          }
-          *readbytes = i;
-          if (i == maxbytes) return READ_BUFFER_OVERFLOW;
-        }
-        if (!expect) return readres;
-        break;
-      case FRAME_CLOSE:
-        memset(&cframe, 0, sizeof(ControlFrame));
-        cframe.header.opcode = FRAME_CLOSE;
-        cframe.header.end    = 1;
-        cframe.header.mask   = frame.header.mask;
-        cframe.header.length = 0;
-        write(connection->fd, &cframe, sizeof(FrameHeader));
-        if (frame.header.mask) {
-          write(connection->fd, &frame.mask, FRAME_MASK_SIZE);
-        }
-        close(connection->fd);
-        return READ_CONNECTION_CLOSED;
-      case FRAME_PING:
-        memset(&cframe, 0, sizeof(ControlFrame));
-        cframe.header.opcode = FRAME_PONG;
-        cframe.header.end    = 1;
-        cframe.header.mask   = frame.header.mask;
-        cframe.header.length = 0;
-        write(connection->fd, &cframe, sizeof(FrameHeader));
-        if (frame.header.mask) {
-          write(connection->fd, &frame.mask, FRAME_MASK_SIZE);
-        }
-        break;
-      case FRAME_PONG:
-        *(clock_t*)(void*)buffer = (clock() - connection->ping) / (CLOCKS_PER_SEC / 1000);
-        readbytes = sizeof(clock_t);
-        return READ_PING_TIME;
-      default:
-        fprintf(interface->errstream, "Unimplemented (wsread)\n");
-        exit(EXIT_FAILURE);
-        break;
-    }
-  }
-  return readres;
-}
-
-void wsmulticast(Interface *interface, const void *buffer, const size_t size, const int type) {
-  for (int i = 0; i < WS_MAX_CONN; i++) {
-    if (interface->connections[i]) wssend(interface, i, buffer, size, type);
-  }
-}
-
-void wsping(Interface *interface, int descriptor) {
-  wssend(interface, descriptor, NULL, 0, FRAME_PING);
-}
-
-int wsopen(Interface *interface) {
-  int       descriptor = -1;
-  int       client_fd;
-  socklen_t addrlen = sizeof(struct sockaddr_in);
-
-  if ((client_fd = accept(interface->fd, (struct sockaddr *restrict)&interface->address, &addrlen)) < 0) {
-    fprintf(interface->errstream, "Cannot accept\n");
-    return NULL;
-  }
-
-  for (int i = 0; i < WS_MAX_CONN; i++) {
-    if (!interface->connections[i]) {
-      Connection *connection = malloc(sizeof(Connection));
-      memset(connection, 0, sizeof(Connection));
-      connection->fd              = client_fd;
-      connection->timeout.tv_sec  =  interface->timeout_ms / 1000;
-      connection->timeout.tv_usec = (interface->timeout_ms % 1000) * 1000;
-      connection->mask            = interface->mask;
-
-      if (handshake(connection)) {
-        descriptor = -2;
-        free(connection);
-      } else {
-        descriptor = i;
-        interface->connections[i] = connection;
+    int client = wsaccept(websocket->server);
+    if (client == CONNECTION_FAILURE) break;
+    // Purge the old connections
+    for (int i = 0; i < WS_MAX_CONN; i++) {
+      // This means that the thread is still going but that the connection is closed
+      if (client_thread[i] && !websocket->server->connections[i]->active) {
+        pthread_join(client_thread[i], NULL);
+        client_thread[i] = 0;
+        wsclose(websocket->server, i);
       }
-      break;
+    }
+    if (client != CONNECTION_BAD_HANDSHAKE && client != CONNECTION_MAX_READCHED) {
+      void **vargp = malloc(2 * sizeof(void*));
+      if (vargp) {
+        vargp[0] = (void*)websocket;
+        vargp[1] = (void*)client;
+        callback(websocket->server, client, websocket->env);
+        pthread_create(&client_thread[client], NULL, wslisten, vargp);
+      } else {
+        wsclose(websocket->server, client);
+      }
     }
   }
-  if (descriptor >= 0) {
-    fprintf(interface->stdstream, "Connection with client %d success\n", descriptor);
-  } else if (descriptor == - 1) {
-    fprintf(interface->errstream, "Failed to perform handshake\n");
-    close(client_fd);
-  } else {
-    fprintf(interface->errstream, "Max connections reached\n");
-    close(client_fd);
+  for (int i = 0; i < WS_MAX_CONN; i++) {
+    if (client_thread[i]) pthread_join(client_thread[i], NULL);
   }
-  return descriptor;
+
+  wsstop(websocket->server);
+  websocket->server = NULL;
+  return NULL;
 }
 
-void wsclose(Interface *interface, int descriptor) {
-  Connection *connection = interface->connections[descriptor];
-  close(interface->fd);
-  free(connection);
-  interface->connections[descriptor] = NULL;
-}
-
-Interface *wsstart(const short port, const int timeout, const int mask, const FILE *stdstream, FILE *errstream) {
-  Interface *interface = malloc(sizeof(Interface));
-  if (interface) {
-    int                 server_fd;
-    struct sockaddr_in *address;
-
-    interface->port       = port;
-    interface->timeout_ms = timeout;
-    interface->mask       = htonl(mask);
-    interface->stdstream  = stdstream;
-    interface->errstream  = errstream;
-    address               = &interface->address;
-    memset(interface->connections, 0, WS_MAX_CONN * sizeof(Connection*));
-
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-      fprintf(errstream, "Cannot create socket\n");
-      return NULL;
-    }
-    fprintf(stdstream, "WebSocket Server created successfully\n");
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0) {
-      fprintf(errstream, "Cannot reuse socket");
-      return NULL;
-    }
-    fprintf(stdstream, "Socket setup successful\n");
-
-    memset(&address, 0, sizeof(struct sockaddr_in));
-    memset(address->sin_zero, 0, sizeof(unsigned char));
-    address->sin_family      = AF_INET;
-    address->sin_addr.s_addr = htonl(INADDR_ANY);
-    address->sin_port        = htons(port);
-
-    if (bind(server_fd, (struct sockaddr *restrict)&address, sizeof(struct sockaddr_in)) < 0) {
-      fprintf(errstream, "Bind failed\n");
-      return NULL;
-    }
-    fprintf(stdstream, "Socket binded successfuly\n");
-
-    if (listen(server_fd, WS_MAX_CONN) < 0) {
-      fprintf(errstream, "Cannot listen\n");
-      return NULL;
-    }
-    fprintf(stdstream, "Listening on port %s for WebSocket connections...\n", port);
+WebSocket *wsalloc(int port, FILE *messages, FILE *errors) {
+  WebSocket *websocket = malloc(sizeof(WebSocket));
+  
+  if (websocket) {
+    websocket->port     = port;
+    websocket->messages = messages;
+    websocket->errors   = errors;
   }
-  return interface;
 }
 
-void wsstop(Interface *interface) {
-  if (interface) {
-    close(interface->fd);
-    free(interface);
+void wsfree(WebSocket *websocket) {
+  wsteardown(websocket);
+  free(websocket);
+}
+
+void wsinit(WebSocket *websocket, ConnCallback onconnect, ReadCallback onread) {
+  if (websocket->server) return;
+  websocket->server    = wsstart(websocket->port, websocket->messages, websocket->errors);
+  websocket->onconnect = onconnect;
+  websocket->onread    = onread;
+  pthread_create(&websocket->server_thread, NULL, wsconnect, (void*)websocket);
+}
+
+void wsteardown(WebSocket *websocket) {
+  if (websocket->server) {
+    // This should trigger the connection to close
+    close(websocket->server->fd);
+  }
+  if (websocket->server_thread) {
+    pthread_join(websocket->server_thread, NULL);
+    websocket->server_thread = 0;
   }
 }

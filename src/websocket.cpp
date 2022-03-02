@@ -1,3 +1,8 @@
+/* Author: Philippe Caron (philippe-caron@hotmail.com)
+ * Date: 02 Mar 2022
+ * Description: WebSocket implementation for C++.
+ */
+
 #include <websocket.hpp>
 
 #include <algorithm>

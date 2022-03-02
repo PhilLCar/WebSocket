@@ -316,8 +316,8 @@ int wsread(WebSocketServer *server, const int client, unsigned char *buffer, con
         }
         break;
       case FRAME_PONG:
-        *(clock_t*)(void*)buffer = (clock() - connection->ping) / (CLOCKS_PER_SEC / 1000);
-        readbytes = sizeof(clock_t);
+        *(long*)(void*)buffer = (long)(clock() - connection->ping) / (CLOCKS_PER_SEC / 1000);
+        readbytes = sizeof(long);
         return READ_PING_TIME;
       default:
         fprintf(server->errors, "Fatal error: unimplemented (wsread)\n");

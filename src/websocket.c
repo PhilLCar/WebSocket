@@ -60,7 +60,14 @@ void *wsconnect(void *vargp) {
   return NULL;
 }
 
-WebSocket *wsalloc(int port, FILE *messages, FILE *errors) {
+void disconnect(WebSocket *websocket, const int client) {
+  // This should trigger the conneciton loop to end
+  int *fd = &websocket->server->connections[client]->fd;
+  close(*fd);
+  *fd = -1;
+}
+
+WebSocket *wsalloc(const int port, FILE *messages, FILE *errors) {
   WebSocket *websocket = malloc(sizeof(WebSocket));
   
   if (websocket) {
@@ -85,8 +92,9 @@ void wsinit(WebSocket *websocket, ConnCallback onconnect, ReadCallback onread) {
 
 void wsteardown(WebSocket *websocket) {
   if (websocket->server) {
-    // This should trigger the connection to close
+    // This should trigger the server loop to end
     close(websocket->server->fd);
+    websocket->server->fd = -1;
   }
   if (websocket->server_thread) {
     pthread_join(websocket->server_thread, NULL);

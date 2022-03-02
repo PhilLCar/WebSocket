@@ -41,10 +41,13 @@ void WebSocket::ReceptionEvent::operator -=(ReceptionCallback callback) {
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 WebSocket::WebSocket(const int port)
   : port(port)
+  , pingfile(nullptr)
   , messages(std::tmpfile())
   , errors(std::tmpfile())
   , server(nullptr)
   , serverThread(nullptr)
+  , lastMessage("")
+  , lastError("")
 {
   messageThread = new std::thread(waitForMessages, this);
   errorThread   = new std::thread(waitForErrors, this);
@@ -65,6 +68,7 @@ void WebSocket::stop() {
   if (server) {
     // This should trigger the connection to close
     close(server->fd);
+    server->fd = -1;
   }
   if (serverThread) {
     serverThread->join();
@@ -97,8 +101,23 @@ void WebSocket::send(const int client, const std::string& text) {
   }
 }
 
-void WebSocket::ping(const int client) {
+int WebSocket::ping(const int client) {
+  long        ping_ms = -1;
+  std::string name = "./ping" + std::to_string(port) + ".tmp";
+  pingfile = new std::fstream(name.c_str(), std::ios_base::in | std::ios_base::out);
+  onReceive += pong;
+  wsping(server, client);
+  *pingfile >> ping_ms;
+  onReceive -= pong;
+  pingfile->close();
+  delete pingfile;
+  std::remove(name.c_str());
+  return ping_ms;
+}
 
+void WebSocket::disconnect(const int client) {
+  close(server->connections[client]->fd);
+  server->connections[client]->fd = -1;
 }
 
 const std::string& WebSocket::message() {
@@ -140,7 +159,7 @@ void WebSocket::waitForConnections() {
       }
     }
     if (client != CONNECTION_BAD_HANDSHAKE && client != CONNECTION_MAX_READCHED) {
-      onConnection.trigger(this, client);
+      onConnect.trigger(this, client);
       clientThread[client] = new std::thread(waitForMessages, this, client);
     }
   }
@@ -160,7 +179,11 @@ void WebSocket::waitForReceptions(const int client) {
   RawData *data = new RawData;
   do {
     data->type = (DataType)wsread(server, client, data->buffer, FRAME_MAX_SIZE, &data->size);
-    onReception.trigger(this, client, data);
+    onReceive.trigger(this, client, data);
   } while (data->type != DATA_FAILURE && data->type != DATA_CLOSE);
   delete data;
+}
+
+void WebSocket::pong(WebSocket* socket, const int client, const RawData* data) {
+  *socket->pingfile << (long)(void*)data->buffer;
 }

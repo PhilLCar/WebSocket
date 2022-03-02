@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <vector>
 #include <thread>
+#include <fstream>
 
 #include <wsserver.h>
 
@@ -34,7 +35,7 @@ public:
   class ConnectionEvent {
     friend WebSocket;
   public:
-    typedef int (*ConnectionCallback)(WebSocket* socket, const int client);
+    typedef void (*ConnectionCallback)(WebSocket* socket, const int client);
   public:
     void operator +=(ConnectionCallback callback);
     void operator -=(ConnectionCallback callback);
@@ -47,7 +48,7 @@ public:
   class ReceptionEvent {
     friend WebSocket;
   public:
-    typedef int (*ReceptionCallback)(WebSocket* socket, const int client, const RawData* data);
+    typedef void (*ReceptionCallback)(WebSocket* socket, const int client, const RawData* data);
   public:
     void operator +=(ReceptionCallback callback);
     void operator -=(ReceptionCallback callback);
@@ -74,7 +75,8 @@ public:
     send(client, (void*)&serialized, sizeof(T));
   }
 
-  void ping(const int client);
+  int  ping(const int client);
+  void disconnect(const int client);
 
   const std::string& message();
   const std::string& error();
@@ -85,13 +87,16 @@ private:
   void waitForConnections();
   void waitForReceptions(const int client);
 
+  static void pong(WebSocket* socket, const int client, const RawData* data);
+
 public:
-  ConnectionEvent onConnection;
-  ReceptionEvent  onReception;
+  ConnectionEvent onConnect;
+  ReceptionEvent  onReceive;
   void*           environmentPointer;
 
 private:
   const int        port;
+  std::fstream*    pingfile;
   std::FILE*       messages;
   std::FILE*       errors;
   WebSocketServer* server;

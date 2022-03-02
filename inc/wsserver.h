@@ -57,6 +57,14 @@ regard, this implementation is not concerned with large data transfers.
 #define CONNECTION_MAX_READCHED  -2
 #define CONNECTION_BAD_HANDSHAKE -3
 
+typedef struct websocket_connection {
+  int                   active;
+  int                   fd;
+  clock_t               ping;
+  char                  key[WS_KEY_SIZE];
+  int                   version;
+} WebSocketConnection;
+
 typedef struct websocket_server {
   short                port;
   int                  fd;
@@ -65,14 +73,6 @@ typedef struct websocket_server {
   FILE                *errors;
   WebSocketConnection *connections[WS_MAX_CONN];
 } WebSocketServer;
-
-typedef struct websocket_connection {
-  int                   active;
-  int                   fd;
-  clock_t               ping;
-  char                  key[WS_KEY_SIZE];
-  int                   version;
-} WebSocketConnection;
 
 #pragma pack(push, 1)
 typedef struct frame_header {
@@ -125,13 +125,6 @@ If very huge payloads need to be transmitted, use the fractionning functionnalit
 big payloads are not the focus of this implementation.
 */
 
-typedef struct frame {
-  FrameHeader   header;
-  unsigned char mask[WS_MASK_SIZE];
-  unsigned int  length;
-  unsigned char payload[FRAME_MAX_SIZE];
-} Frame;
-
 /*
 NOTE:
 This implementation is not optimized for multicast at all. For now, simply send the message to each
@@ -146,7 +139,7 @@ int  wsread(WebSocketServer *server, const int client, unsigned char *buffer, co
 int  wsaccept(WebSocketServer *server);
 void wsclose(WebSocketServer *server, int client);
 
-WebSocketServer *wsstart(const short port, const FILE *messages, const FILE *errors);
+WebSocketServer *wsstart(const short port, FILE *messages, FILE *errors);
 void             wsstop(WebSocketServer *server);
 
 #endif

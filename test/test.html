@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      html, body {
+        background-color: lightsteelblue;
+        font-family: Arial, Helvetica, sans-serif;
+        margin: 0px;
+        height: 100%;
+      }
+
+      span {
+        color: yellow;
+      }
+
+      button, input {
+        font-weight: bold;
+        padding: 5px;
+      }
+      
+      button:hover, input[type="submit"]:hover {
+        cursor: pointer;
+      }
+
+      #main {
+        max-width: 800px;
+        margin: auto;
+        padding: 50px;
+        background-color:midnightblue;
+        color: white;
+        height: calc(100% - 100px);
+        display: flex;
+        flex-direction: column;
+      }
+
+      #buttons {
+        margin-top:    10px;
+        margin-bottom: 10px;
+      }
+      
+      #send {
+        display: flex;
+      }
+
+      #messages {
+        margin-top: 10px;
+        background-color: #004;
+        border: 1px solid #AAC;
+        color: #AAC;
+        flex-grow: 1;
+        padding: 10px;
+        overflow: auto;
+      }
+
+      #status_icon {
+        display: inline-block;
+        height: 8px;
+        width:  8px;
+        border: 2px solid grey;
+        border-radius: 8px;
+      }
+
+      #status_icon[status="disconnected"] {
+        background-color: red;
+      }
+
+      #status_icon[status="connected"] {
+        background-color: lawngreen;
+      }
+
+      #textbox {
+        margin-right: 10px;
+        flex-grow: 1;
+      }
+    </style>
+    <title>WebSocket test</title>
+  	<script type="text/javascript" src="websocket.js"></script>
+  </head>
+  <body>
+    <div id="main">
+      <h1>WebSocket test</h1>
+      <div>
+        Current WebSocket connection status: <span id="status">Disconnected <div id="status_icon" status="disconnected"></div></span>
+      </div>
+      <div id="buttons">
+        <button id="connect">Connect</button>
+        <button id="ping">Ping</button>
+        <button id="disconnect">Disconnect</button>
+      </div>
+      <form id="send" onsubmit="send(this)">
+        <input name="send_textbox" type="text" id="textbox">
+        <input name="send_button"  type="submit" value="Send">
+      </form>
+      <div id="messages">
+      </div>
+    </div>
+  </body>
+</html> 

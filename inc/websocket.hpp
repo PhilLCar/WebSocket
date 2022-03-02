@@ -12,99 +12,79 @@
 #include <vector>
 #include <thread>
 #include <fstream>
+#include <exception>
 
 #include <wsserver.h>
+#include <wsconnection.hpp>
 
-class WebSocket {
-public:
-  enum DataType {
-    DATA_PING       = READ_PING_TIME,
-    DATA_TEXT       = READ_TEXT,
-    DATA_BINARY     = READ_BINARY,
-    DATA_FAILURE    = READ_FAILURE,
-    DATA_INCOMPLETE = READ_BUFFER_OVERFLOW,
-    DATA_CLOSE      = READ_CONNECTION_CLOSED
-  };
-
-  struct RawData {
-    unsigned char buffer[FRAME_MAX_FRAGMENTS * FRAME_MAX_SIZE];
-    size_t        size;
-    DataType      type;
-  };
-
-  class ConnectionEvent {
-    friend WebSocket;
+namespace ws {
+  class WebSocket {
   public:
-    typedef void (*ConnectionCallback)(WebSocket* socket, const int client);
+    class ServerException : std::exception {
+    public:
+      ServerException(WebSocket* socket);
+      const char *what();
+    private:
+      std::string exception;
+      WebSocket*  socket;
+    };
+
+    class ConnectionEvent {
+      friend WebSocket;
+    public:
+      typedef void (*ConnectionCallback)(Connection* connection);
+    public:
+      void operator +=(ConnectionCallback callback);
+      void operator -=(ConnectionCallback callback);
+    private:
+      void trigger(Connection* connection);
+    private:
+      std::vector<ConnectionCallback> callbacks;
+    };
+
   public:
-    void operator +=(ConnectionCallback callback);
-    void operator -=(ConnectionCallback callback);
+    WebSocket(const int port);
+    ~WebSocket();
+
+  public:
+    void start();
+    void stop();
+
+    void sendAll(const void* data, const size_t size);
+    void sendAll(const char* text);
+    void sendAll(const std::string& text);
+
+    template <typename T>
+    inline void sendAll(const T& serialized) {
+      sendAll((void*)&serialized, sizeof(T));
+    }
+
+    const std::string& message();
+    const std::string& error();
+
   private:
-    void trigger(WebSocket* socket, const int client);
+    void waitForMessages();
+    void waitForErrors();
+    void waitForConnections();
+
+  public:
+    ConnectionEvent onConnect;
+    void*           environmentPointer;
+
   private:
-    std::vector<ConnectionCallback> callbacks;
+    const int                         port;
+    bool                              expectClose;
+    std::fstream*                     pingfile;
+    std::FILE*                        messages;
+    std::FILE*                        errors;
+    WebSocketServer*                  server;
+    std::thread*                      serverThread;
+    std::thread*                      messageThread;
+    std::thread*                      errorThread;
+    std::string                       lastMessage;
+    std::string                       lastError;
+    std::vector<WebSocketConnection*> connections;
   };
-  
-  class ReceptionEvent {
-    friend WebSocket;
-  public:
-    typedef void (*ReceptionCallback)(WebSocket* socket, const int client, const RawData* data);
-  public:
-    void operator +=(ReceptionCallback callback);
-    void operator -=(ReceptionCallback callback);
-  private:
-    void trigger(WebSocket* socket, const int client, const RawData* data);
-  private:
-    std::vector<ReceptionCallback> callbacks;
-  };
-
-public:
-  WebSocket(const int port);
-  ~WebSocket();
-
-public:
-  void start();
-  void stop();
-
-  void send(const int client, const void* data, const size_t size);
-  void send(const int client, const char* text);
-  void send(const int client, const std::string& text);
-
-  template <typename T>
-  void send(const int client, const T& serialized) {
-    send(client, (void*)&serialized, sizeof(T));
-  }
-
-  int  ping(const int client);
-  void disconnect(const int client);
-
-  const std::string& message();
-  const std::string& error();
-
-private:
-  void waitForMessages();
-  void waitForErrors();
-  void waitForConnections();
-  void waitForReceptions(const int client);
-
-  static void pong(WebSocket* socket, const int client, const RawData* data);
-
-public:
-  ConnectionEvent onConnect;
-  ReceptionEvent  onReceive;
-  void*           environmentPointer;
-
-private:
-  const int        port;
-  std::fstream*    pingfile;
-  std::FILE*       messages;
-  std::FILE*       errors;
-  WebSocketServer* server;
-  std::thread*     serverThread;
-  std::thread*     messageThread;
-  std::thread*     errorThread;
-  std::string      lastMessage;
-  std::string      lastError;
-};
+}
 
 #endif

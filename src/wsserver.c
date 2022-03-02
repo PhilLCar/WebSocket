@@ -19,6 +19,14 @@
 const char           *SOCKET_MAGIC_STR = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const struct timeval  TIMEOUT          = { WS_TIMEOUT / 1000, (WS_TIMEOUT % 1000) * 1000};
 
+// A conceptual frame (no specific byte format)
+typedef struct frame {
+  FrameHeader   header;
+  unsigned char mask[WS_MASK_SIZE];
+  unsigned int  length;
+  unsigned char payload[FRAME_MAX_SIZE];
+} Frame;
+
 int masktoint(unsigned char *mask) {
   int imask = 0;
   for (int i = 0; i < WS_MASK_SIZE; i++) {
@@ -107,12 +115,12 @@ int handshake(WebSocketConnection *connection) {
 
 void wsmulticast(WebSocketServer *server, const void *buffer, const size_t size, const int type) {
   for (int i = 0; i < WS_MAX_CONN; i++) {
-    if (server->connections[i]) wssend(server, i, buffer, size, type);
+    if (server->connections[i]) wswrite(server, i, buffer, size, type);
   }
 }
 
 void wsping(WebSocketServer *server, int client) {
-  wssend(server, client, NULL, 0, FRAME_PING);
+  wswrite(server, client, NULL, 0, FRAME_PING);
 }
 
 void wswrite(WebSocketServer *server, const int client, const unsigned char *buffer, const size_t size, const int type) {
@@ -164,7 +172,6 @@ void wswrite(WebSocketServer *server, const int client, const unsigned char *buf
   // If it fits in a Long Frame
   else if (size <= FRAME_MAX_SIZE) {
     LongFrame lframe;
-    int i = 0;
 
     memset(&lframe.header, 0, sizeof(FrameHeader));
     lframe.header.end    = 1;
@@ -215,7 +222,6 @@ void wswrite(WebSocketServer *server, const int client, const unsigned char *buf
       }
     }
   }
-  return NULL;
 }
 
 int wsread(WebSocketServer *server, const int client, unsigned char *buffer, const size_t maxbytes, size_t *readbytes) {
@@ -231,7 +237,7 @@ int wsread(WebSocketServer *server, const int client, unsigned char *buffer, con
     fd_set input;
     FD_ZERO(&input);
     FD_SET(connection->fd, &input);
-    int n = select(connection->fd + 1, &input, NULL, NULL, &TIMEOUT);
+    int n = select(connection->fd + 1, &input, NULL, NULL, (struct timeval*)&TIMEOUT);
     if (n < 0) { // the connection fd was somehow closed
       connection->active =  0;
       connection->fd     = -1;
@@ -317,7 +323,7 @@ int wsread(WebSocketServer *server, const int client, unsigned char *buffer, con
         break;
       case FRAME_PONG:
         *(long*)(void*)buffer = (long)(clock() - connection->ping) / (CLOCKS_PER_SEC / 1000);
-        readbytes = sizeof(long);
+        *readbytes = sizeof(long);
         return READ_PING_TIME;
       default:
         fprintf(server->errors, "Fatal error: unimplemented (wsread)\n");
@@ -380,7 +386,7 @@ void wsclose(WebSocketServer *server, int client) {
   }
 }
 
-WebSocketServer *wsstart(const short port, const FILE *messages, const FILE *errors) {
+WebSocketServer *wsstart(const short port, FILE *messages, FILE *errors) {
   WebSocketServer *server = malloc(sizeof(WebSocketServer));
   if (server) {
     int                 server_fd;
@@ -419,7 +425,7 @@ WebSocketServer *wsstart(const short port, const FILE *messages, const FILE *err
       fprintf(errors, "Cannot listen\n");
       return NULL;
     }
-    fprintf(messages, "Listening on port %s for WebSocket connections...\n", port);
+    fprintf(messages, "Listening on port %d for WebSocket connections...\n", port);
   }
   return server;
 }

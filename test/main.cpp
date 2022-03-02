@@ -6,27 +6,27 @@ struct Env {
 
 };
 
-void connect(WebSocket* socket, const int client) {
-  socket->send(client, "Connected, woohoo!");
-}
-
-void receive(WebSocket* socket, const int client, const WebSocket::RawData* data) {
+void receive(ws::Connection* connection, const ws::RawData* data) {
   std::cout << data->buffer << "\n";
-  
 }
 
-int main() {
+void connect(ws::Connection* connection) {
+  connection->send("Connected, woohoo!");
+  connection->onReceive += receive;
+}
+
+int main(int argc, char *argv[]) {
   Env env;
-  WebSocket websocket(8000);
+  ws::WebSocket websocket(8000);
 
   websocket.environmentPointer = (void*)&env;
   websocket.onConnect += connect;
-  websocket.onReceive += receive;
 
   websocket.start();
 
+  system("pause");
+
   websocket.stop();
 
-  std::cout << "Press <enter> to continue...";
-  std::getline();
+  return 0;
 }

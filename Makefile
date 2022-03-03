@@ -30,8 +30,7 @@ $(OBJECTS)%.cpp.o: %.cpp
 $(OBJECTS)%.c.o: %.c
 	$(CC) -c -o $@ $< $(CFLAGS) 
 
-test: $(OBJ_LIST)
-	$(eval CFLAGS+=-g)
+test: $(eval CFLAGS+=-g) $(OBJ_LIST)
 	$(CMP) -o $(BINARIES)/$(TARGET) $(MAIN) $(OBJ_LIST) $(CFLAGS)
 
 clean:

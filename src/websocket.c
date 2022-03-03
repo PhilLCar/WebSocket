@@ -4,17 +4,20 @@
  */
 
 #include <websocket.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 
 void *wslisten(void *vargp) {
-  size_t        *readbytes;
   int            readstatus;
+  size_t        *readbytes  = NULL;
   unsigned char *buffer     = malloc(FRAME_MAX_FRAGMENTS * FRAME_MAX_SIZE * sizeof(unsigned char));
   WebSocket     *websocket  = (WebSocket*)((void**)vargp)[0];
-  int            client     =             ((long**)vargp)[1];
+  int            client     =              ((long*)vargp)[1];
   do {
     readstatus = wsread(websocket->server, client, buffer, FRAME_MAX_SIZE, readbytes);
-    callback(websocket->server, client, buffer, *readbytes, readstatus);
+    websocket->onread(websocket->server, client, buffer, *readbytes, readstatus, websocket->env);
   } while (readstatus != READ_FAILURE && readstatus != READ_CONNECTION_CLOSED);
   
   free(buffer);
@@ -43,8 +46,8 @@ void *wsconnect(void *vargp) {
       void **vargp = malloc(2 * sizeof(void*));
       if (vargp) {
         vargp[0] = (void*)websocket;
-        vargp[1] = (void*)client;
-        callback(websocket->server, client, websocket->env);
+        vargp[1] = (void*)(long)client;
+        websocket->onconnect(websocket->server, client, websocket->env);
         pthread_create(&client_thread[client], NULL, wslisten, vargp);
       } else {
         wsclose(websocket->server, client);
@@ -60,7 +63,7 @@ void *wsconnect(void *vargp) {
   return NULL;
 }
 
-void disconnect(WebSocket *websocket, const int client) {
+void wsdisconnect(WebSocket *websocket, const int client) {
   // This should trigger the conneciton loop to end
   int *fd = &websocket->server->connections[client]->fd;
   close(*fd);
@@ -75,6 +78,8 @@ WebSocket *wsalloc(const int port, FILE *messages, FILE *errors) {
     websocket->messages = messages;
     websocket->errors   = errors;
   }
+
+  return websocket;
 }
 
 void wsfree(WebSocket *websocket) {

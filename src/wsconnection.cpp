@@ -21,10 +21,11 @@ namespace ws {
   // WebSocketConnection
   ///////////////////////////////////////////////////////////////////////////////////////////////////////
   Connection::Connection(WebSocket* socket, WebSocketServer* server, const int client)
-    : socket(socket)
+    : alive(server->connections[client]->active) 
     , client(client)
-    , alive(server->connections[client]->active)
+    , socket(socket)
     , connectionThread(nullptr)
+    , pingfile(nullptr)
   {
   }
 
@@ -64,7 +65,7 @@ namespace ws {
 
   void Connection::listen() {
     if (!connectionThread) {
-      connectionThread = new std::thread(waitForReceptions, this);
+      connectionThread = new std::thread(&ws::Connection::waitForReceptions, this);
     }
   }
 

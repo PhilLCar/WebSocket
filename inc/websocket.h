@@ -9,6 +9,9 @@
 #include <wsserver.h>
 #include <pthread.h>
 
+typedef void (*ConnCallback)(WebSocketServer *server, int client, void *environment);
+typedef void (*ReadCallback)(WebSocketServer *server, int client, unsigned char *buffer, size_t read, int status, void *environment);
+
 typedef struct websocket {
   int              port;
   FILE            *messages;
@@ -19,9 +22,6 @@ typedef struct websocket {
   ReadCallback     onread;
   void            *env;
 } WebSocket;
-
-typedef void (*ConnCallback)(WebSocketServer *server, int client, void *environment);
-typedef void (*ReadCallback)(WebSocketServer *server, int client, unsigned char *buffer, size_t read, int status, void *environment);
 
 void wsdisconnect(WebSocket *websocket, const int client);
 

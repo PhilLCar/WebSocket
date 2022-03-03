@@ -125,6 +125,10 @@ If very huge payloads need to be transmitted, use the fractionning functionnalit
 big payloads are not the focus of this implementation.
 */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
 NOTE:
 This implementation is not optimized for multicast at all. For now, simply send the message to each
@@ -141,5 +145,9 @@ void wsclose(WebSocketServer *server, int client);
 
 WebSocketServer *wsstart(const short port, FILE *messages, FILE *errors);
 void             wsstop(WebSocketServer *server);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

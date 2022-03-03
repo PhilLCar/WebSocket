@@ -49,8 +49,8 @@ namespace ws {
     , lastMessage("")
     , lastError("")
   {
-    messageThread = new std::thread(waitForMessages, this);
-    errorThread   = new std::thread(waitForErrors, this);
+    messageThread = new std::thread(&ws::WebSocket::waitForMessages, this);
+    errorThread   = new std::thread(&ws::WebSocket::waitForErrors, this);
   }
 
   WebSocket::~WebSocket() {
@@ -62,7 +62,7 @@ namespace ws {
   void WebSocket::start() {
     if (server) return;
     server = wsstart(port, messages, errors);
-    serverThread = new std::thread(waitForConnections, this);
+    serverThread = new std::thread(&ws::WebSocket::waitForConnections, this);
   }
 
   void WebSocket::stop() {

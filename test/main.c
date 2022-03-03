@@ -35,23 +35,23 @@ void printm(int client, char *buffer, int type) {
               local->tm_min,
               local->tm_sec,
               client,
-              *(long*)(void*)buffer);
+              (int)*(long*)(void*)buffer);
     }
   }
 }
 
-void receive(WebSocketServer *server, int client, unsigned char *buffer, size_t read, int status, void *environment) {
+void reception(WebSocketServer *server, int client, unsigned char *buffer, size_t read, int status, void *environment) {
   // Make sure the test is null terminated
   buffer[read] = 0;
-  printm(client, buffer, status);
+  printm(client, (char*)buffer, status);
 }
 
-void connect(WebSocketServer *server, int client, void *environment) {
+void connection(WebSocketServer *server, int client, void *environment) {
   const char *message = "Connection established";
 
   ((Env*)environment)->client = client;
   printm(client, (char*)message, FRAME_TEXT);
-  wswrite(server, client, message, strlen(message), FRAME_TEXT);
+  wswrite(server, client, (const unsigned char*)message, strlen(message), FRAME_TEXT);
 }
 
 int main(int argc, char *argv[]) {
@@ -61,17 +61,18 @@ int main(int argc, char *argv[]) {
   ws->env = (void*)&env;
   if (ws) {
 
-    wsinit(ws, receive, connect);
+    wsinit(ws, connection, reception);
     printf("To ping send 'p', to quit simply send an empty string.\n");
     while (1) {
       char buffer[256];
       fgets(buffer, 256, stdin);
       if (!strcmp(buffer, "")) break;
-      if (env.client >= 0)
-      if (!strcmp(buffer, "p")) {
-        wsping(ws->server, env.client);
-      } else {
-        wswrite(ws->server, env.client, buffer, strlen(buffer), FRAME_TEXT);
+      if (env.client >= 0) {
+        if (!strcmp(buffer, "p")) {
+          wsping(ws->server, env.client);
+        } else {
+          wswrite(ws->server, env.client, (const unsigned char*)buffer, strlen(buffer), FRAME_TEXT);
+        }
       }
     }
     wsteardown(ws);

@@ -14,8 +14,8 @@
 #include <fstream>
 #include <exception>
 
-#include <wsserver.h>
 #include <wsconnection.hpp>
+#include <wsserver.h>
 
 namespace ws {
   class WebSocket {

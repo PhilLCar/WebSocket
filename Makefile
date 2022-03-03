@@ -1,6 +1,6 @@
 CC     = gcc
-CPPC   = g++
-CFLAGS = -Iinc -Wall
+CXX    = g++
+CFLAGS = -Iinc -Wall -lcrypto -pthread
 VPATH  = src/
 
 LIBRARIES = lib/
@@ -9,28 +9,30 @@ OBJECTS   = obj/
 BASE_SRC  = http.c wsserver.c
 
 ifeq "$(LANG)" "c++"
-	CMP      = $(CPPC)
-	MAIN     = main.cpp
+	CMP      = $(CXX)
+	MAIN     = test/main.cpp
 	LANG_SRC = websocket.cpp wsconnection.cpp
+	TARGET   = test_cpp
 else
 	CMP      = $(CC)
-	MAIN     = main.c
+	MAIN     = test/main.c
 	LANG_SRC = websocket.c
+	TARGET   = test_c
 endif
 
-OBJ_LIST  = $(addprefix $(OBJECTS), $(BASE_SRC:=.o) $(LANG_OBJ:=.o))
+OBJ_LIST  = $(addprefix $(OBJECTS), $(BASE_SRC:=.o) $(LANG_SRC:=.o))
 
 .PHONY: test clean
 
 $(OBJECTS)%.cpp.o: %.cpp
-	$(CPPC) -c -o $@ $< $(CFLAGS) 
+	$(CXX) -c -o $@ $< $(CFLAGS) 
 
 $(OBJECTS)%.c.o: %.c
 	$(CC) -c -o $@ $< $(CFLAGS) 
 
 test: $(OBJ_LIST)
 	$(eval CFLAGS+=-g)
-	$(CMP) -c -o bin/test test/$(MAIN) $(OBJ_LIST) $(CFLAGS)
+	$(CMP) -o $(BINARIES)/$(TARGET) $(MAIN) $(OBJ_LIST) $(CFLAGS)
 
 clean:
 	rm obj/*.o

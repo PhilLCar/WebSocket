@@ -6,8 +6,8 @@
 #include <websocket.hpp>
 
 #include <algorithm>
-#include <unistd.h>
-#include <string.h>
+#include <cstring>
+#include <fstream>
 
 namespace ws {
   // ServerException
@@ -38,25 +38,27 @@ namespace ws {
 
   // WebSocket
   ///////////////////////////////////////////////////////////////////////////////////////////////////////
-  WebSocket::WebSocket(const int port)
+  WebSocket::WebSocket(const int port, const void* envPtr)
     : port(port)
-    , expectClose(false)
-    , pingfile(nullptr)
-    , messages(std::tmpfile())
-    , errors(std::tmpfile())
+    , envPtr(envPtr)
     , server(nullptr)
     , serverThread(nullptr)
     , lastMessage("")
     , lastError("")
+    , mname(".messages." + std::to_string(port) + ".tmp")
+    , ename(".errors."   + std::to_string(port) + ".tmp")
   {
-    messageThread = new std::thread(&ws::WebSocket::waitForMessages, this);
-    errorThread   = new std::thread(&ws::WebSocket::waitForErrors, this);
+    messages = std::fopen(mname.c_str(), "w+");
+    errors   = std::fopen(ename.c_str(), "w+");
   }
+
+  WebSocket::WebSocket(const int port) : WebSocket(port, nullptr) {}
 
   WebSocket::~WebSocket() {
     stop();
-    delete messageThread;
-    delete errorThread;
+
+    std::remove(mname.c_str());
+    std::remove(ename.c_str());
   }
 
   void WebSocket::start() {
@@ -66,15 +68,14 @@ namespace ws {
   }
 
   void WebSocket::stop() {
-    if (server && server->fd >= 0) {
-      // This should trigger the connection to close
-      close(server->fd);
-      server->fd = -1;
-    }
-    if (serverThread) {
-      serverThread->join();
-      delete serverThread;
-      serverThread = nullptr;
+    if (server) {
+      wsstop(server);
+      if (serverThread) {
+        serverThread->join();
+        delete serverThread;
+        serverThread = nullptr;
+      }
+      server = NULL;
     }
   }
 
@@ -83,7 +84,7 @@ namespace ws {
   }
 
   void WebSocket::sendAll(const char* text) {
-    wsmulticast(server, (unsigned char*)text, strlen(text), DATA_TEXT);
+    wsmulticast(server, (unsigned char*)text, std::strlen(text), DATA_TEXT);
   }
 
   void WebSocket::sendAll(const std::string& text) {
@@ -91,33 +92,36 @@ namespace ws {
   }
 
   const std::string& WebSocket::message() {
+    std::fflush(messages);
+    {
+      std::ifstream mfile(mname, std::ios_base::in);
+      std::string   m;
+
+      while (std::getline(mfile, m)) lastMessage = m;
+      mfile.close();
+    }
     return lastMessage;
   }
 
   const std::string& WebSocket::error() {
-    return lastError;
-  }
+    std::fflush(errors);
+    {
+      std::ifstream mfile(mname, std::ios_base::in);
+      std::string   m;
 
-  void WebSocket::waitForMessages() {
-    char buffer[256];
-
-    std::fgets(buffer, sizeof(buffer), messages);
-    lastMessage = std::string(buffer);
-  }
-
-  void WebSocket::waitForErrors() {
-    char buffer[256];
-
-    std::fgets(buffer, sizeof(buffer), errors);
-    lastMessage = std::string(buffer);
+      while (std::getline(mfile, lastMessage)) lastError = m;
+      mfile.close();
+    }
+    return lastMessage;
   }
 
   void WebSocket::waitForConnections() {
+    int         client;
     Connection* connections[WS_MAX_CONN] = { nullptr };
 
     while (true) {
-      int client = wsaccept(server);
-      if (client == CONNECTION_FAILURE) break;
+      client = wsaccept(server);
+      if (client == CONNECTION_FAILURE || client == CONNECTION_CLOSED) break;
       // Purge the old connections
       for (int i = 0; i < WS_MAX_CONN; i++) {
         // This means that the thread is still going but that the connection is closed
@@ -128,7 +132,7 @@ namespace ws {
         }
       }
       if (client != CONNECTION_BAD_HANDSHAKE && client != CONNECTION_MAX_READCHED) {
-        Connection* connection = new Connection(this, this->server, client);
+        Connection* connection = new Connection(this->server, client, envPtr);
         onConnect.trigger(connection);
         connections[client] = connection;
         connection->listen();
@@ -136,14 +140,11 @@ namespace ws {
     }
     for (int i = 0; i < WS_MAX_CONN; i++) {
       if (connections[i]) {
+        connections[i]->disconnect();
         delete connections[i];
-        // No need to cleanup, the server is about to do it anyway
       }
     }
 
-    wsstop(server);
-    server = NULL;
-
-    if (!expectClose) throw ServerException(this);
+    if (client != CONNECTION_CLOSED) throw ServerException(this);
   }
 }

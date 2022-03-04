@@ -1,7 +1,12 @@
+/* Author: Philippe Caron (philippe-caron@hotmail.com)
+ * Date: 03 Mar 2022
+ * Description: WebSocket connection implementation for C++.
+ */
+
 #include <wsconnection.hpp>
 
-#include <string.h>
-#include <unistd.h>
+#include <chrono>
+#include <cstring>
 
 namespace ws {
   // ReceptionEvent
@@ -20,12 +25,12 @@ namespace ws {
 
   // WebSocketConnection
   ///////////////////////////////////////////////////////////////////////////////////////////////////////
-  Connection::Connection(WebSocket* socket, WebSocketServer* server, const int client)
-    : alive(server->connections[client]->active) 
+  Connection::Connection(WebSocketServer* server, const int client, const void* envPtr)
+    : server(server)
     , client(client)
-    , socket(socket)
+    , envPtr(envPtr)
+    , alive(server->connections[client]->active)
     , connectionThread(nullptr)
-    , pingfile(nullptr)
   {
   }
 
@@ -38,25 +43,25 @@ namespace ws {
   }
 
   void Connection::send(const char* text) {
-    wswrite(server, client, (unsigned char*)text, strlen(text), DATA_TEXT);
+    wswrite(server, client, (unsigned char*)text, std::strlen(text), DATA_TEXT);
   }
 
   void Connection::send(const std::string& text) {
     wswrite(server, client, (unsigned char*)text.c_str(), text.length(), DATA_TEXT);
   }
 
-  int Connection::ping() {
-    long        ping_ms = -1;
-    std::string name = "./ping" + std::to_string(server->port) + "_" + std::to_string(client) + ".tmp";
-    pingfile = new std::fstream(name.c_str(), std::ios_base::in | std::ios_base::out);
+  int Connection::ping(int timeout_ms) {
+    int p = -1;
+    pingMutex.lock();
     onReceive += pong;
     wsping(server, client);
-    *pingfile >> ping_ms;
+    if (pingMutex.try_lock_for(std::chrono::milliseconds(timeout_ms))) {
+      // Timeout
+      p = ping_ms;
+    }
     onReceive -= pong;
-    pingfile->close();
-    delete pingfile;
-    std::remove(name.c_str());
-    return ping_ms;
+    pingMutex.unlock();
+    return p;
   }
 
   bool Connection::isAlive() {
@@ -70,16 +75,18 @@ namespace ws {
   }
 
   void Connection::disconnect() {
-    int* fd = &server->connections[client]->fd;
-    if (fd >= 0) {
-      close(server->connections[client]->fd);
-      server->connections[client]->fd = -1;
-    }
     if (connectionThread) {
-      connectionThread->join();
-      delete connectionThread;
-      connectionThread = nullptr;
+      wsclose(server, client);
+      if (connectionThread) {
+        connectionThread->join();
+        delete connectionThread;
+        connectionThread = nullptr;
+      }
     }
+  }
+
+  const int Connection::getClientID() {
+    return client;
   }
 
   void Connection::waitForReceptions() {
@@ -87,13 +94,16 @@ namespace ws {
     do {
       data->type = (DataType)wsread(server, client, data->buffer, FRAME_MAX_SIZE, &data->size);
       onReceive.trigger(this, data);
-    } while (data->type != DATA_FAILURE && data->type != DATA_CLOSE);
+    } while (data->type >= 0 || data->type == DATA_INCOMPLETE);
     delete data;
   }
 
 
 
   void Connection::pong(Connection* connection, const RawData* data) {
-    *connection->pingfile << (long)(void*)data->buffer;
+    if (data->type == DATA_PING) {
+      connection->ping_ms = *(long*)(void*)data->buffer;
+      connection->pingMutex.unlock();
+    }
   }
 }

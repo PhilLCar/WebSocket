@@ -6,12 +6,9 @@
 #ifndef WEBSOCKET_HPP
 #define WEBSOCKET_HPP
 
-#include <cstddef>
 #include <string>
-#include <cstdio>
 #include <vector>
 #include <thread>
-#include <fstream>
 #include <exception>
 
 #include <wsconnection.hpp>
@@ -44,6 +41,14 @@ namespace ws {
 
   public:
     WebSocket(const int port);
+
+    template <typename T>
+    inline WebSocket(const int port, const T& env) : WebSocket(port, (const void*)&env) {}
+
+  private:
+    WebSocket(const int port, const void* envPtr);
+
+  public:
     ~WebSocket();
 
   public:
@@ -63,27 +68,22 @@ namespace ws {
     const std::string& error();
 
   private:
-    void waitForMessages();
-    void waitForErrors();
     void waitForConnections();
 
   public:
     ConnectionEvent onConnect;
-    void*           environmentPointer;
 
   private:
-    const int                         port;
-    bool                              expectClose;
-    std::fstream*                     pingfile;
-    std::FILE*                        messages;
-    std::FILE*                        errors;
-    WebSocketServer*                  server;
-    std::thread*                      serverThread;
-    std::thread*                      messageThread;
-    std::thread*                      errorThread;
-    std::string                       lastMessage;
-    std::string                       lastError;
-    std::vector<WebSocketConnection*> connections;
+    const int        port;
+    const void*      envPtr;
+    std::FILE*       messages;
+    std::FILE*       errors;
+    WebSocketServer* server;
+    std::thread*     serverThread;
+    std::string      lastMessage;
+    std::string      lastError;
+    std::string      mname;
+    std::string      ename;
   };
 }
 

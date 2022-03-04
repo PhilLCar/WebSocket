@@ -11,14 +11,14 @@
 
 void *wslisten(void *vargp) {
   int            readstatus;
-  size_t        *readbytes  = NULL;
+  size_t         readbytes  = 0;
   unsigned char *buffer     = malloc(FRAME_MAX_FRAGMENTS * FRAME_MAX_SIZE * sizeof(unsigned char));
-  WebSocket     *websocket  = (WebSocket*)((void**)vargp)[0];
-  int            client     =              ((long*)vargp)[1];
+  WebSocket     *websocket  = ((WebSocket**)vargp)[0];
+  int            client     =       ((long*)vargp)[1];
   do {
-    readstatus = wsread(websocket->server, client, buffer, FRAME_MAX_SIZE, readbytes);
-    websocket->onread(websocket->server, client, buffer, *readbytes, readstatus, websocket->env);
-  } while (readstatus != READ_FAILURE && readstatus != READ_CONNECTION_CLOSED);
+    readstatus = wsread(websocket->server, client, buffer, FRAME_MAX_SIZE, &readbytes);
+    websocket->onread(websocket->server, client, buffer, readbytes, readstatus, websocket->env);
+  } while (readstatus >= 0 || readstatus == READ_BUFFER_OVERFLOW); // (Buffer overflow is not a fatal error)
   
   free(buffer);
   return NULL;
@@ -32,7 +32,7 @@ void *wsconnect(void *vargp) {
   memset(client_thread, 0, WS_MAX_CONN * sizeof(pthread_t));
   while (1) {
     int client = wsaccept(websocket->server);
-    if (client == CONNECTION_FAILURE) break;
+    if (client == CONNECTION_FAILURE || client == CONNECTION_CLOSED) break;
     // Purge the old connections
     for (int i = 0; i < WS_MAX_CONN; i++) {
       // This means that the thread is still going but that the connection is closed
@@ -55,19 +55,13 @@ void *wsconnect(void *vargp) {
     }
   }
   for (int i = 0; i < WS_MAX_CONN; i++) {
-    if (client_thread[i]) pthread_join(client_thread[i], NULL);
+    if (client_thread[i]) {
+      wsclose(websocket->server, i);
+      pthread_join(client_thread[i], NULL);
+    }
   }
 
-  wsstop(websocket->server);
-  websocket->server = NULL;
   return NULL;
-}
-
-void wsdisconnect(WebSocket *websocket, const int client) {
-  // This should trigger the conneciton loop to end
-  int *fd = &websocket->server->connections[client]->fd;
-  close(*fd);
-  *fd = -1;
 }
 
 WebSocket *wsalloc(const int port, FILE *messages, FILE *errors) {
@@ -97,12 +91,11 @@ void wsinit(WebSocket *websocket, ConnCallback onconnect, ReadCallback onread) {
 
 void wsteardown(WebSocket *websocket) {
   if (websocket->server) {
-    // This should trigger the server loop to end
-    close(websocket->server->fd);
-    websocket->server->fd = -1;
-  }
-  if (websocket->server_thread) {
-    pthread_join(websocket->server_thread, NULL);
-    websocket->server_thread = 0;
+    wsstop(websocket->server);
+    if (websocket->server_thread) {
+      pthread_join(websocket->server_thread, NULL);
+      websocket->server_thread = 0;
+    }
+    websocket->server = NULL;
   }
 }

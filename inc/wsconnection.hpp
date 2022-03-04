@@ -1,10 +1,15 @@
+/* Author: Philippe Caron (philippe-caron@hotmail.com)
+ * Date: 03 Mar 2022
+ * Description: WebSocket connection implementation for C++.
+ */
+
 #ifndef WEBSOCKETCONNECTION_HPP
 #define WEBSOCKETCONNECTION_HPP
 
 #include <vector>
 #include <thread>
-#include <fstream>
 #include <algorithm>
+#include <mutex>
 
 #include <wstypes.hpp>
 
@@ -25,7 +30,7 @@ namespace ws {
       std::vector<ReceptionCallback> callbacks;
     };
   public:
-    Connection(WebSocket* socket, WebSocketServer* server, const int client);
+    Connection(WebSocketServer* server, const int client, const void* envPtr);
     ~Connection();
 
   public:
@@ -38,10 +43,17 @@ namespace ws {
       send((void*)&serialized, sizeof(T));
     }
 
-    int  ping();
+    int  ping(int timeout_ms = 1000);
     bool isAlive();
     void listen();
     void disconnect();
+
+    const int   getClientID();
+
+    template <typename T>
+    inline T* getEnvPtr() {
+      return (T*)envPtr;
+    }
 
   private:
     void waitForReceptions();
@@ -52,12 +64,13 @@ namespace ws {
     ReceptionEvent   onReceive;
 
   private:
-    const int&       alive;
-    const int        client;
-    WebSocket*       socket;
     WebSocketServer* server;
+    const int        client;
+    const void*      envPtr;
+    const int&       alive;
     std::thread*     connectionThread;
-    std::fstream*    pingfile;
+    std::timed_mutex pingMutex;
+    long             ping_ms;
   };
 }
 

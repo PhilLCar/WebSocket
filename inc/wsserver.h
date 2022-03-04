@@ -51,11 +51,13 @@ regard, this implementation is not concerned with large data transfers.
 #define READ_BINARY            FRAME_BINARY
 #define READ_FAILURE                     -1
 #define READ_BUFFER_OVERFLOW             -2
-#define READ_CONNECTION_CLOSED           -3
+#define READ_CONNECTION_CLOSED_SERVER    -3
+#define READ_CONNECTION_CLOSED_CLIENT    -4
 
 #define CONNECTION_FAILURE       -1
 #define CONNECTION_MAX_READCHED  -2
 #define CONNECTION_BAD_HANDSHAKE -3
+#define CONNECTION_CLOSED        -4
 
 typedef struct websocket_connection {
   int                   active;
@@ -68,6 +70,7 @@ typedef struct websocket_connection {
 typedef struct websocket_server {
   short                port;
   int                  fd;
+  int                  close;
   struct sockaddr_in   address;
   FILE                *messages;
   FILE                *errors;
@@ -78,13 +81,13 @@ typedef struct websocket_server {
 typedef struct frame_header {
   union {
     struct {
-      unsigned int  end    : 1;
-      unsigned int  rsv1   : 1;
-      unsigned int  rsv2   : 1;
-      unsigned int  rsv3   : 1;
-      unsigned int  opcode : 4;
-      unsigned int  mask   : 1;
       unsigned int  length : 7;
+      unsigned int  mask   : 1;
+      unsigned int  opcode : 4;
+      unsigned int  rsv3   : 1;
+      unsigned int  rsv2   : 1;
+      unsigned int  rsv1   : 1;
+      unsigned int  end    : 1;
     };
     unsigned short bytes;
   };

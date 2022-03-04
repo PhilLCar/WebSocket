@@ -1,3 +1,8 @@
+<!--
+Author: Philippe Caron (philippe-caron@hotmail.com)
+Date: 03 Mar 2022
+Description: Very simple interface for testing the WebSocket server.
+-->
 <!DOCTYPE html>
 <html>
   <head>
@@ -52,6 +57,11 @@
         overflow: auto;
       }
 
+      #status_text {
+        display: inline-block;
+        margin-right: 5px;
+      }
+
       #status_icon {
         display: inline-block;
         height: 8px;
@@ -68,28 +78,28 @@
         background-color: lawngreen;
       }
 
-      #textbox {
+      #send_textbox {
         margin-right: 10px;
         flex-grow: 1;
       }
     </style>
     <title>WebSocket test</title>
-  	<script type="text/javascript" src="websocket.js"></script>
+  	<script type="text/javascript" src="test.js"></script>
   </head>
   <body>
     <div id="main">
       <h1>WebSocket test</h1>
       <div>
-        Current WebSocket connection status: <span id="status">Disconnected <div id="status_icon" status="disconnected"></div></span>
+        Current WebSocket connection status: <span><div id="status_text">Disconnected</div><div id="status_icon" status="disconnected"></div></span>
       </div>
       <div id="buttons">
-        <button id="connect">Connect</button>
-        <button id="ping">Ping</button>
-        <button id="disconnect">Disconnect</button>
+        <button id="connect"    onclick="connect('localhost', 8000)">Connect</button>
+        <button id="ping"       onclick="ping()"            disabled>Ping</button>
+        <button id="disconnect" onclick="disconnect()"      disabled>Disconnect</button>
       </div>
-      <form id="send" onsubmit="send(this)">
-        <input name="send_textbox" type="text" id="textbox">
-        <input name="send_button"  type="submit" value="Send">
+      <form id="send" onsubmit="send(); return false">
+        <input id="send_textbox" type="text"   value=""     disabled autocomplete="off">
+        <input id="send_button"  type="submit" value="Send" disabled>
       </form>
       <div id="messages">
       </div>

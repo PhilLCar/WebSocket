@@ -23,8 +23,6 @@ typedef struct websocket {
   void            *env;
 } WebSocket;
 
-void wsdisconnect(WebSocket *websocket, const int client);
-
 WebSocket *wsalloc(const int port, FILE *messages, FILE *errors);
 void       wsfree(WebSocket *websocket);
 

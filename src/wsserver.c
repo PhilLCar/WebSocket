@@ -62,6 +62,8 @@ int handshake(WebSocketConnection *connection) {
 
   HttpRequest  request;
   HttpResponse response;
+  memset(&request,  0, sizeof(HttpRequest));
+  memset(&response, 0, sizeof(HttpResponse));
   memset(buffer, 0, bufsize * sizeof(char));
   read(connection->fd, buffer, bufsize);
   httpreqfromstr(&request, buffer);
@@ -230,6 +232,7 @@ int wsread(WebSocketServer *server, const int client, unsigned char *buffer, con
   WebSocketConnection *connection = server->connections[client];
   int                  expect     = 0;
   int                  readstatus = READ_FAILURE;
+  struct timeval       timeout    = TIMEOUT;
 
   *readbytes = 0;
 
@@ -237,18 +240,23 @@ int wsread(WebSocketServer *server, const int client, unsigned char *buffer, con
     fd_set input;
     FD_ZERO(&input);
     FD_SET(connection->fd, &input);
-    int n = select(connection->fd + 1, &input, NULL, NULL, (struct timeval*)&TIMEOUT);
-    if (n < 0) { // the connection fd was somehow closed
-      connection->active =  0;
-      connection->fd     = -1;
-      return READ_CONNECTION_CLOSED;
+    int n = select(connection->fd + 1, &input, NULL, NULL, &timeout);
+    if (n < 0) {
+      connection->active = 0;
+      fprintf(server->messages, "Connection was closed by server\n");
+      return READ_CONNECTION_CLOSED_SERVER;
     }
     else if (n == 0) continue; // select timed out
 
     // Frame header
     {
       short header;
-      read(connection->fd, &header, sizeof(short));
+      int   bytes = read(connection->fd, &header, sizeof(short));
+      if (!bytes) {
+        connection->active = 0;
+        fprintf(server->errors, "Connection was closed by client unexpectedly\n");
+        return READ_CONNECTION_CLOSED_CLIENT;
+      }
       frame.header.bytes = ntohs(header);
     }
     if (frame.header.length < 126) {
@@ -281,7 +289,7 @@ int wsread(WebSocketServer *server, const int client, unsigned char *buffer, con
         } else if (frame.header.opcode == FRAME_BINARY) {
           readstatus = READ_BINARY;
         } else if (frame.header.opcode == FRAME_TEXT) {
-          readstatus = READ_BINARY;
+          readstatus = READ_TEXT;
         }
         expect = !frame.header.end;
         {
@@ -307,7 +315,9 @@ int wsread(WebSocketServer *server, const int client, unsigned char *buffer, con
           write(connection->fd, &cframe, sizeof(FrameHeader));
         }
         connection->active = 0;
-        return READ_CONNECTION_CLOSED;
+        fprintf(server->messages, "Connection was closed by client\n");
+        shutdown(connection->fd, SHUT_RDWR);
+        return READ_CONNECTION_CLOSED_CLIENT;
       case FRAME_PING:
         memset(&cframe, 0, sizeof(ControlFrame));
         cframe.header.opcode = FRAME_PONG;
@@ -339,9 +349,11 @@ int wsaccept(WebSocketServer *server) {
   socklen_t addrlen = sizeof(struct sockaddr_in);
 
   if ((client_fd = accept(server->fd, (struct sockaddr *restrict)&server->address, &addrlen)) < 0) {
-    // The server fd was somehow closed
-    server->fd = -1;
     for (int i = 0; i < WS_MAX_CONN; i++) wsclose(server, i);
+    if (server->close) {
+      fprintf(server->messages, "Closing server\n");
+      return CONNECTION_CLOSED;
+    }
     fprintf(server->errors, "Cannot accept\n");
     return CONNECTION_FAILURE;
   }
@@ -380,7 +392,8 @@ void wsclose(WebSocketServer *server, int client) {
   WebSocketConnection *connection = server->connections[client];
 
   if (connection) {
-    if (connection->fd >= 0) close(connection->fd);
+    shutdown(connection->fd, SHUT_RDWR);
+    close(connection->fd);
     free(connection);
     server->connections[client] = NULL;
   }
@@ -392,10 +405,10 @@ WebSocketServer *wsstart(const short port, FILE *messages, FILE *errors) {
     int                 server_fd;
     struct sockaddr_in *address;
 
-    server->port      = port;
-    server->messages  = messages;
-    server->errors    = errors;
-    address               = &server->address;
+    server->port     = port;
+    server->messages = messages;
+    server->errors   = errors;
+    address          = &server->address;
     memset(server->connections, 0, WS_MAX_CONN * sizeof(WebSocketConnection*));
 
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
@@ -404,18 +417,18 @@ WebSocketServer *wsstart(const short port, FILE *messages, FILE *errors) {
     }
     fprintf(messages, "WebSocket Server created successfully\n");
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0) {
-      fprintf(errors, "Cannot reuse socket");
+      fprintf(errors, "Cannot reuse socket\n");
       return NULL;
     }
     fprintf(messages, "Socket setup successful\n");
 
-    memset(&address, 0, sizeof(struct sockaddr_in));
+    memset(address, 0, sizeof(struct sockaddr_in));
     memset(address->sin_zero, 0, sizeof(unsigned char));
     address->sin_family      = AF_INET;
     address->sin_addr.s_addr = htonl(INADDR_ANY);
     address->sin_port        = htons(port);
 
-    if (bind(server_fd, (struct sockaddr *restrict)&address, sizeof(struct sockaddr_in)) < 0) {
+    if (bind(server_fd, (struct sockaddr *restrict)address, sizeof(struct sockaddr_in)) < 0) {
       fprintf(errors, "Bind failed\n");
       return NULL;
     }
@@ -425,6 +438,7 @@ WebSocketServer *wsstart(const short port, FILE *messages, FILE *errors) {
       fprintf(errors, "Cannot listen\n");
       return NULL;
     }
+    server->fd = server_fd;
     fprintf(messages, "Listening on port %d for WebSocket connections...\n", port);
   }
   return server;
@@ -433,7 +447,8 @@ WebSocketServer *wsstart(const short port, FILE *messages, FILE *errors) {
 void wsstop(WebSocketServer *server) {
   if (server) {
     for (int i = 0; i < WS_MAX_CONN; i++) wsclose(server, i);
-    if (server->fd >= 0) close(server->fd);
+    shutdown(server->fd, SHUT_RDWR);
+    close(server->fd);
     free(server);
   }
 }

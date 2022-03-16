@@ -56,7 +56,8 @@ namespace ws {
 
   WebSocket::~WebSocket() {
     stop();
-
+    std::fclose(messages);
+    std::fclose(errors);
     std::remove(mname.c_str());
     std::remove(ename.c_str());
   }

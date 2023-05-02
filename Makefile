@@ -1,52 +1,19 @@
-CC     = gcc
-CXX    = g++
-CFLAGS = -Iinc -Wall -lcrypto -pthread
-VPATH  = src/
+# The following variables need to be set prior to including library.mk
 
-LIBRARIES = lib/
-BINARIES  = bin/
-OBJECTS   = obj/
-BASE_SRC  = http.c wsserver.c
+# Library name
+NAME = websocket
 
-ifeq "$(LANG)" "C++"
-	CMP      = $(CXX)
-	MAIN     = test/main.cpp
-	LANG_SRC = websocket.cpp wsconnection.cpp
-	TARGET   = test_cpp
-	LIB      = libcppws.a
-else
-	CMP      = $(CC)
-	MAIN     = test/main.c
-	LANG_SRC = websocket.c
-	TARGET   = test_c
-	LIB      = libcws.a
-endif
+# Versioning
+include ver/version.mk
 
-OBJ_LIST  = $(addprefix $(OBJECTS), $(BASE_SRC:=.o) $(LANG_SRC:=.o))
+# If the project is separated among multiple sub-folders
+PROJECT_ROOTS =
 
-.PHONY: test clean clean-lib clean-obj clean-bin lib bin obj
+# Additionnal libraries (ex: -pthread, -lmath, etc)
+ADD_LIBRARIES = 
 
-$(OBJECTS)%.cpp.o: %.cpp
-	$(CXX) -c -o $@ $< $(CFLAGS) 
+# Additionnal flags for the compiler
+ADD_CFLAGS = 
 
-$(OBJECTS)%.c.o: %.c
-	$(CC) -c -o $@ $< $(CFLAGS)
-
-$(LIBRARIES)$(LIB): $(OBJ_LIST)
-	ar rcs $@ $^
-
-lib: $(LIBRARIES)$(LIB)
-
-clean-bin:
-	rm -f bin/*
-
-clean-obj:
-	rm -f obj/*.o
-
-clean-lib:
-	rm -f lib/*.a
-
-clean: clean-lib clean-obj clean-bin
-
-test: clean $(eval CFLAGS+=-g) $(OBJ_LIST)
-	$(CMP) -o $(BINARIES)$(TARGET) $(MAIN) $(OBJ_LIST) $(CFLAGS)
+# Include the template
+include $(CUT_HOME)CUT/res/library.mk

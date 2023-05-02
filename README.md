@@ -1,4 +1,4 @@
-# WebSocket
+# WebSocket (CUT)
 Minimal WebSocket Server ([RFC6455 Protocol](https://datatracker.ietf.org/doc/html/rfc6455)) implementation for C/C++.
 
 The goal of this implementation is to provide a minimal but efficient and easy to use solution for personnal web servers that need near instantaneous communication with a program. The main use-case is to make a web-based interface for any C/C++ program.
